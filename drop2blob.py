@@ -70,22 +70,12 @@ class BackupContext(object):
             self.dropbox_filenames.extend([x.name for x in sorted(dropbox_glob)])
             workdir_glob = self.local_working_dir.glob(pattern)
             self.working_dir_filenames.extend([x.name for x in sorted(workdir_glob)])
-        # Get bucket contents for year/month/device
-        #self.bucket_file_paths = [
-        #    obj.key
-        #    for obj in self.bucket.objects.filter(Prefix=self.dir_prefix)
-        #    if Path(obj.key).suffix != ""
-        #]
-        #self.bucket_filenames = [Path(x).name for x in self.bucket_file_paths]
         self.blob_container_paths = [
             blob.name
             for blob in self.container_client.list_blobs()
             if Path(blob.name).suffix != ""
         ]
         self.blob_container_filenames = [Path(x).name for x in self.blob_container_paths]
-
-        #    if Path(x).suffix is not '']
-        #    x.split("/")[-1] for x in self.bucket_file_paths]
 
         # Populate DB
         # TODO - add an IsVideo column so we don't have to check for .mov extension
@@ -343,7 +333,7 @@ def difflocal(backup_context):
         filename = row["Filename"]
         in_dropbox = row["InDropbox"]
         in_workdir = row["InWorkingDir"]
-        in_s3 = row["InBlob"]
+        in_blob = row["InBlob"]
         dropbox_file_abspath = backup_context.dropbox_camera_uploads_dir / filename
         file_ext = os.path.splitext(filename)[1]
         if file_ext in (backup_context.video_file_extensions):
@@ -360,7 +350,7 @@ def difflocal(backup_context):
         # Silencing since this is a little verbose:
         #elif in_dropbox == 0 and in_workdir == 1:
         #    click.secho(fmt.format(filename, "workdir only"))
-        elif in_dropbox == 0 and in_workdir == 0 and in_s3 == 1:
+        elif in_dropbox == 0 and in_workdir == 0 and in_blob == 1:
             click.secho(fmt.format(filename, "blob storage only"), bg="blue", fg="white")
 
 
@@ -376,15 +366,15 @@ def diffblob(backup_context):
         filename = row["Filename"]
         in_dropbox = row["InDropbox"]
         in_workdir = row["InWorkingDir"]
-        in_s3 = row["InBlob"]
-        if in_workdir == 1 and in_s3 == 1:
+        in_blob = row["InBlob"]
+        if in_workdir == 1 and in_blob == 1:
             print(fmt.format(filename, "👍 found in blob ctr & workdir"))
             # TODO - compare blob container file checksum against md5 of local file?
-        elif in_workdir == 1 and in_s3 == 0:
+        elif in_workdir == 1 and in_blob == 0:
             click.secho(fmt.format(filename, "workdir only"), bg="red", fg="white")
-        elif in_workdir == 0 and in_s3 == 1:
+        elif in_workdir == 0 and in_blob == 1:
             click.secho(fmt.format(filename, "blob storage only"))
-        elif in_workdir == 0 and in_s3 == 0 and in_dropbox == 1:
+        elif in_workdir == 0 and in_blob == 0 and in_dropbox == 1:
             click.secho(fmt.format(filename, "dropbox only"), bg="red", fg="white")
 
 
@@ -409,30 +399,30 @@ def upload(backup_context, dryrun):
             #)
             continue
 
-        bucket_dest_images = backup_context.dir_prefix
-        bucket_dest_videos = backup_context.dir_prefix + "video/"
+        blob_dest_images = backup_context.dir_prefix
+        blob_dest_videos = backup_context.dir_prefix + "video/"
         file_ext = os.path.splitext(workdir_filename)[1]
         if file_ext in backup_context.video_file_extensions:
-            bucket_root = bucket_dest_videos
+            blob_root = blob_dest_videos
             workdir_file_abspath = (
                 backup_context.local_working_dir / "video" / workdir_filename
             )
         else:
-            bucket_root = bucket_dest_images
+            blob_root = blob_dest_images
             workdir_file_abspath = backup_context.local_working_dir / workdir_filename
 
-        bucket_file_key = bucket_root + workdir_filename
+        blob_file_key = blob_root + workdir_filename
         if dryrun:
             click.echo(
                 "Dry run; would have uploaded '{}' to blob container path '{}'".format(
-                    workdir_filename, bucket_file_key
+                    workdir_filename, blob_file_key
                 )
             )
             continue
         else:
             click.echo(
                 "Uploading '{}' to blob container path '{}'".format(
-                    workdir_file_abspath, bucket_file_key
+                    workdir_file_abspath, blob_file_key
                 )
             )
             # Upload the file
@@ -440,7 +430,7 @@ def upload(backup_context, dryrun):
                 # With the default upload_blob() params large video files almost always
                 # time out - setting connection_timeout to a high value seems to avoid that:
                 # https://stackoverflow.com/a/71000273
-                blob_client = backup_context.container_client.upload_blob(name=bucket_file_key, data=data, overwrite=True, connection_timeout=60)
+                blob_client = backup_context.container_client.upload_blob(name=blob_file_key, data=data, overwrite=True, connection_timeout=60)
 
 
 @cli.command()
@@ -471,9 +461,6 @@ def download(backup_context, dryrun):
                     key, "{}/{}".format(backup_context.local_blob_dir, key)
                 )
             )
-            #backup_context.bucket.download_file(
-            #     key, "{}/{}".format(backup_context.local_blob_dir, key)
-            #)
             blob_client = backup_context.container_client.get_blob_client(blob=key)
             with open("{}/{}".format(backup_context.local_blob_dir, key), "wb") as download_file:
                 download_data = blob_client.download_blob()
@@ -555,11 +542,3 @@ def workflow(backup_context, dryrun):
         click.echo(
             "All done - to delete your files from Dropbox, run the rm-dropbox-files command."
         )
-
-#@cli.command()
-#@pass_backup_context
-#def test(backup_context):
-#    """test and debugging command
-#    """
-#    for filename in backup_context.working_dir_filenames:
-#        print(filename)
