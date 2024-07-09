@@ -6,6 +6,10 @@ Create a virtualenv in which the `drop2blob` command is available:
 
     ./pip_install_editable.sh
 
+Activate the venv in your shell:
+
+    source env/bin/activate
+
 Typical usage:
 
     drop2blob \
